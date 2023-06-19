@@ -7,4 +7,18 @@ layout:
 - go.kubebuilder.io/v4
 projectName: kuadra
 repo: github.com/Kuadrant/kuadra
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kuadrant.io
+  group: kuadra
+  kind: AwsAccount
+  path: github.com/Kuadrant/kuadra/api/v1
+  version: v1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 version: "3"
