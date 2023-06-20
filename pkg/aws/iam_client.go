@@ -14,27 +14,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 )
 
-type IamWrapper interface {
-	GetUser(userName string) (*types.User, error)
-	CreateUser(userName string) (*types.User, error)
-	ListUsers(maxUsers int32) ([]types.User, error)
-	CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error)
-	CreateAccessKeyPair(userName string) (*types.AccessKey, error)
-	AddUserToGroup(groupName string, userName string) (middleware.Metadata, error)
-}
-
 type iamWrapper struct {
 	IamClient *iam.Client
 }
 
-func NewIamWrapper() (*IamWrapper, error) {
+func NewIamWrapper() (*iamWrapper, error) {
 	// TODO: take config/credentials in this constructor
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-west-2"))
 	if err != nil {
 		return nil, err
 	}
 
-	var iamWrapper IamWrapper = iamWrapper{
+	iamWrapper := iamWrapper{
 		IamClient: iam.NewFromConfig(sdkConfig),
 	}
 	return &iamWrapper, nil

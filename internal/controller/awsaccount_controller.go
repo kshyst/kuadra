@@ -27,14 +27,13 @@ import (
 	"github.com/sethvargo/go-password/password"
 
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
-	"github.com/Kuadrant/kuadra/pkg/aws"
 )
 
 // AwsAccountReconciler reconciles a AwsAccount object
 type AwsAccountReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
-	IamWrapper aws.IamWrapper
+	IamWrapper IamWrapper
 }
 
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts,verbs=get;list;watch;create;update;patch;delete
