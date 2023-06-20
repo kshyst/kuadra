@@ -14,7 +14,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 )
 
-type IamWrapper struct {
+type IamWrapper interface {
+	GetUser(userName string) (*types.User, error)
+	CreateUser(userName string) (*types.User, error)
+	ListUsers(maxUsers int32) ([]types.User, error)
+	CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error)
+	CreateAccessKeyPair(userName string) (*types.AccessKey, error)
+	AddUserToGroup(groupName string, userName string) (middleware.Metadata, error)
+}
+
+type iamWrapper struct {
 	IamClient *iam.Client
 }
 
@@ -25,13 +34,13 @@ func NewIamWrapper() (*IamWrapper, error) {
 		return nil, err
 	}
 
-	iamWrapper := IamWrapper{
+	var iamWrapper IamWrapper = iamWrapper{
 		IamClient: iam.NewFromConfig(sdkConfig),
 	}
 	return &iamWrapper, nil
 }
 
-func (wrapper IamWrapper) GetUser(userName string) (*types.User, error) {
+func (wrapper iamWrapper) GetUser(userName string) (*types.User, error) {
 	var user *types.User
 	result, err := wrapper.IamClient.GetUser(context.TODO(), &iam.GetUserInput{
 		UserName: aws.String(userName),
@@ -53,7 +62,7 @@ func (wrapper IamWrapper) GetUser(userName string) (*types.User, error) {
 	return user, err
 }
 
-func (wrapper IamWrapper) CreateUser(userName string) (*types.User, error) {
+func (wrapper iamWrapper) CreateUser(userName string) (*types.User, error) {
 	var user *types.User
 	result, err := wrapper.IamClient.CreateUser(context.TODO(), &iam.CreateUserInput{
 		UserName: aws.String(userName),
@@ -66,7 +75,7 @@ func (wrapper IamWrapper) CreateUser(userName string) (*types.User, error) {
 	return user, err
 }
 
-func (wrapper IamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
+func (wrapper iamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
 	var users []types.User
 	result, err := wrapper.IamClient.ListUsers(context.TODO(), &iam.ListUsersInput{
 		MaxItems: aws.Int32(maxUsers),
@@ -79,7 +88,7 @@ func (wrapper IamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
 	return users, err
 }
 
-func (wrapper IamWrapper) CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
+func (wrapper iamWrapper) CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
 	result, err := wrapper.IamClient.CreateLoginProfile(context.TODO(), &iam.CreateLoginProfileInput{
 		Password:              &password,
 		UserName:              &userName,
@@ -94,7 +103,7 @@ func (wrapper IamWrapper) CreateLoginProfile(password string, userName string, p
 	return loginProfile, err
 }
 
-func (wrapper IamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey, error) {
+func (wrapper iamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey, error) {
 	var key *types.AccessKey
 	result, err := wrapper.IamClient.CreateAccessKey(context.TODO(), &iam.CreateAccessKeyInput{
 		UserName: aws.String(userName)})
@@ -106,7 +115,7 @@ func (wrapper IamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey
 	return key, err
 }
 
-func (wrapper IamWrapper) AddUserToGroup(groupName string, userName string) (middleware.Metadata, error) {
+func (wrapper iamWrapper) AddUserToGroup(groupName string, userName string) (middleware.Metadata, error) {
 	var metadata middleware.Metadata
 	result, err := wrapper.IamClient.AddUserToGroup(context.TODO(), &iam.AddUserToGroupInput{
 		GroupName: aws.String(groupName),

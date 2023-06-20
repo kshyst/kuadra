@@ -60,26 +60,44 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Create user if status.UserCreated is false
-	if !awsAccount.Status.UserCreated {
+	if awsAccount.Status.Account == kuadrav1.CreatingUser || awsAccount.Status.Account == "" {
 		user, err := r.IamWrapper.CreateUser(awsAccount.Spec.UserName)
 		if err != nil {
 			log.Error(err, "unable to create IAM user")
 			return ctrl.Result{}, err
 		}
+		awsAccount.Status.Account = kuadrav1.CreatingLoginProfile
+		if err = r.Status().Update(ctx, &awsAccount); err != nil {
+			log.Error(err, "unable to update awsAccount status")
+			return ctrl.Result{}, err
+		}
+		log.V(1).Info("Created user", "user:", user)
+	}
 
+	if awsAccount.Status.Account == kuadrav1.CreatingLoginProfile {
 		pass, err := password.Generate(20, 3, 3, false, true)
 		if err != nil {
 			log.Error(err, "unable to generate password")
 			return ctrl.Result{}, err
 		}
-
 		_, err = r.IamWrapper.CreateLoginProfile(pass, awsAccount.Spec.UserName, true)
 		if err != nil {
 			log.Error(err, "unable to create login profile")
 			return ctrl.Result{}, err
 		}
 
+		// TODO: Save this to a secret in user's namespace
+		log.V(1).Info("Temporary password", "password", pass)
+
+		awsAccount.Status.Account = kuadrav1.CreatingAccessKey
+		if err = r.Status().Update(ctx, &awsAccount); err != nil {
+			log.Error(err, "unable to update awsAccount status")
+			return ctrl.Result{}, err
+		}
+		log.V(1).Info("Created login profile")
+	}
+
+	if awsAccount.Status.Account == kuadrav1.CreatingAccessKey {
 		accessKey, err := r.IamWrapper.CreateAccessKeyPair(awsAccount.Spec.UserName)
 		if err != nil {
 			log.Error(err, "unable to create access key")
@@ -87,15 +105,14 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		// TODO: Save these to a secret in user's namespace
-		log.V(1).Info("Credentials", "password", pass, "access key ID:", accessKey.AccessKeyId, "Access key secret", accessKey.SecretAccessKey)
+		log.V(1).Info("Credentials", "access key ID:", accessKey.AccessKeyId, "Access key secret", accessKey.SecretAccessKey)
 
-		// TODO: Maybe we should use more detailed statuses here, such as "not created", "missing login profile", "missing access key", "created"
-		awsAccount.Status.UserCreated = true
+		awsAccount.Status.Account = kuadrav1.Created
 		if err = r.Status().Update(ctx, &awsAccount); err != nil {
 			log.Error(err, "unable to update awsAccount status")
 			return ctrl.Result{}, err
 		}
-		log.V(1).Info("Created user", "User:", user)
+		log.V(1).Info("Created access key")
 	}
 
 	return ctrl.Result{}, nil
