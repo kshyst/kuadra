@@ -29,6 +29,29 @@ import (
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
 )
 
+func contains[T comparable](slice []T, val T) bool {
+	for _, element := range slice {
+		if element == val {
+			return true
+		}
+	}
+	return false
+}
+
+func getDifference[T comparable](desired []T, current []T) (wanted []T, unwanted []T) {
+	for _, val := range desired {
+		if !contains[T](current, val) {
+			wanted = append(wanted, val)
+		}
+	}
+	for _, val := range current {
+		if !contains[T](desired, val) {
+			unwanted = append(unwanted, val)
+		}
+	}
+	return wanted, unwanted
+}
+
 // AwsAccountReconciler reconciles a AwsAccount object
 type AwsAccountReconciler struct {
 	client.Client
@@ -52,7 +75,7 @@ type AwsAccountReconciler struct {
 func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// Get AwsAccount object object
+	// Get AwsAccount object
 	var awsAccount kuadrav1.AwsAccount
 	if err := r.Get(ctx, req.NamespacedName, &awsAccount); err != nil {
 		log.Error(err, "unable to fetch AwsAccount")
@@ -113,6 +136,37 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		log.V(1).Info("Created access key")
 	}
+
+	// Reconcile user groups
+	groupsToAddUserTo, _ := getDifference[string](awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
+
+	for _, group := range groupsToAddUserTo {
+		if _, err := r.IamWrapper.AddUserToGroup(group, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to add user to group", "group name", group)
+			return ctrl.Result{}, err
+		}
+		log.V(1).Info("Added user to group", "group name:", group)
+
+		awsAccount.Status.UserGroups = append(awsAccount.Status.UserGroups, group)
+		if err := r.Status().Update(ctx, &awsAccount); err != nil {
+			log.Error(err, "unable to update awsAccount status after adding user to group", "group name", group)
+			return ctrl.Result{}, err
+		}
+	}
+
+	// for _, group := range groupsToRemoveUserFrom {
+	// 	if _, err := r.IamWrapper.RemoveUserFromGroup(group, awsAccount.Spec.UserName); err != nil {
+	// 		log.Error(err, "unable to remove user from group", "group name", group)
+	// 		return ctrl.Result{}, err
+	// 	}
+	// 	log.V(1).Info("Removed user from group", "group name:", group)
+
+	// 	// TODO: delete element from and update awsAccount.Status.UserGroups
+	// 	if err := r.Status().Update(ctx, &awsAccount); err != nil {
+	// 		log.Error(err, "unable to update awsAccount status after removing user from group", "group name", group)
+	// 		return ctrl.Result{}, err
+	// 	}
+	// }
 
 	return ctrl.Result{}, nil
 }

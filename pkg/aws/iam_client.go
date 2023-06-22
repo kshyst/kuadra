@@ -112,7 +112,20 @@ func (wrapper iamWrapper) AddUserToGroup(groupName string, userName string) (mid
 		GroupName: aws.String(groupName),
 		UserName:  aws.String(userName)})
 	if err != nil {
-		log.Printf("Couldn't user %v to group. Here's why: %v\n", userName, err)
+		log.Printf("Couldn't add user %v to group. Here's why: %v\n", userName, err)
+	} else {
+		metadata = result.ResultMetadata
+	}
+	return metadata, err
+}
+
+func (wrapper iamWrapper) RemoveUserFromGroup(groupName string, userName string) (middleware.Metadata, error) {
+	var metadata middleware.Metadata
+	result, err := wrapper.IamClient.RemoveUserFromGroup(context.TODO(), &iam.RemoveUserFromGroupInput{
+		GroupName: aws.String(groupName),
+		UserName:  aws.String(userName)})
+	if err != nil {
+		log.Printf("Couldn't remove user %v from group %v. Here's why: %v\n", userName, groupName, err)
 	} else {
 		metadata = result.ResultMetadata
 	}

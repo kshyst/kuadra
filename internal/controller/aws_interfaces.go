@@ -12,4 +12,5 @@ type IamWrapper interface {
 	CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error)
 	CreateAccessKeyPair(userName string) (*types.AccessKey, error)
 	AddUserToGroup(groupName string, userName string) (middleware.Metadata, error)
+	RemoveUserFromGroup(groupName string, userName string) (middleware.Metadata, error)
 }
