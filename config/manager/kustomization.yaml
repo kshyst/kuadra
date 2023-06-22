@@ -1,2 +1,12 @@
 resources:
 - manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: docker.io/library/kuadra
+  newTag: v1
+secretGenerator:
+- envs:
+  - ../../aws-credentials.env
+  name: aws-credentials
