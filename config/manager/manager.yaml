@@ -83,6 +83,13 @@ spec:
             port: 8081
           initialDelaySeconds: 15
           periodSeconds: 20
+        envFrom:
+          - secretRef:
+              name: aws-credentials
+        # TODO: remove after setting up webhooks/cert-manager.
+        env:
+        - name: ENABLE_WEBHOOKS
+          value: "false"
         readinessProbe:
           httpGet:
             path: /readyz
