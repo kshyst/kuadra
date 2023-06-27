@@ -52,9 +52,6 @@ type AwsAccountStatus struct {
 }
 
 //+kubebuilder:object:root=true
-//+kubebuilder:object:root=true
-//+kubebuilder:object:root=true
-//+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
 // AwsAccount is the Schema for the awsaccounts API
