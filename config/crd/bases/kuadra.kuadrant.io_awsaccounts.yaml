@@ -53,18 +53,13 @@ spec:
           status:
             description: AwsAccountStatus defines the observed state of AwsAccount
             properties:
-              account:
-                enum:
-                - creating user
-                - creating login profile
-                - creating access key
-                - created
-                type: string
+              accessKeyCreated:
+                type: boolean
+              loginProfileCreated:
+                type: boolean
+              userCreated:
+                type: boolean
               userGroups:
-                items:
-                  type: string
-                type: array
-              zonesCreated:
                 items:
                   type: string
                 type: array

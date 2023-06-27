@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"reflect"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -38,18 +40,26 @@ func contains[T comparable](slice []T, val T) bool {
 	return false
 }
 
-func getDifference[T comparable](desired []T, current []T) (wanted []T, unwanted []T) {
-	for _, val := range desired {
-		if !contains[T](current, val) {
-			wanted = append(wanted, val)
+func indexOf[T comparable](slice []T, element T) int {
+	for i, val := range slice {
+		if val == element {
+			return i
 		}
 	}
-	for _, val := range current {
-		if !contains[T](desired, val) {
-			unwanted = append(unwanted, val)
+	return -1
+}
+
+func remove[T any](slice []T, i int) []T {
+	return append(slice[:i], slice[i+1:]...)
+}
+
+func getLeftDifference[T comparable](left []T, right []T) (leftDifference []T) {
+	for _, val := range left {
+		if !contains[T](right, val) {
+			leftDifference = append(leftDifference, val)
 		}
 	}
-	return wanted, unwanted
+	return leftDifference
 }
 
 // AwsAccountReconciler reconciles a AwsAccount object
@@ -75,100 +85,122 @@ type AwsAccountReconciler struct {
 func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// Get AwsAccount object
-	var awsAccount kuadrav1.AwsAccount
-	if err := r.Get(ctx, req.NamespacedName, &awsAccount); err != nil {
+	var previous kuadrav1.AwsAccount
+	if err := r.Get(ctx, req.NamespacedName, &previous); err != nil {
 		log.Error(err, "unable to fetch AwsAccount")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	awsAccount := previous.DeepCopy()
 
-	if awsAccount.Status.Account == kuadrav1.CreatingUser || awsAccount.Status.Account == "" {
-		user, err := r.IamWrapper.CreateUser(awsAccount.Spec.UserName)
-		if err != nil {
+	refreshedStatus, err := r.getRefreshedStatus(*awsAccount)
+	if err != nil {
+		log.Error(err, "unable to get refreshed status")
+		return ctrl.Result{}, err
+	}
+	awsAccount.Status = *refreshedStatus
+
+	if !awsAccount.Status.UserCreated {
+		if err := r.IamWrapper.CreateUserIfNotExists(awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "unable to create IAM user")
 			return ctrl.Result{}, err
 		}
-		awsAccount.Status.Account = kuadrav1.CreatingLoginProfile
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
-			return ctrl.Result{}, err
-		}
-		log.V(1).Info("Created user", "user:", user)
+		log.V(1).Info("created user", "userName", awsAccount.Spec.UserName)
+		awsAccount.Status.UserCreated = true
 	}
 
-	if awsAccount.Status.Account == kuadrav1.CreatingLoginProfile {
+	if !awsAccount.Status.LoginProfileCreated {
 		pass, err := password.Generate(20, 3, 3, false, true)
 		if err != nil {
 			log.Error(err, "unable to generate password")
 			return ctrl.Result{}, err
 		}
-		_, err = r.IamWrapper.CreateLoginProfile(pass, awsAccount.Spec.UserName, true)
-		if err != nil {
+		if err := r.IamWrapper.CreateLoginProfileIfNotExists(pass, awsAccount.Spec.UserName, true); err != nil {
 			log.Error(err, "unable to create login profile")
 			return ctrl.Result{}, err
 		}
+		log.V(1).Info("created login profile")
+		awsAccount.Status.LoginProfileCreated = true
 
 		// TODO: Save this to a secret in user's namespace
 		log.V(1).Info("Temporary password", "password", pass)
-
-		awsAccount.Status.Account = kuadrav1.CreatingAccessKey
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
-			return ctrl.Result{}, err
-		}
-		log.V(1).Info("Created login profile")
 	}
 
-	if awsAccount.Status.Account == kuadrav1.CreatingAccessKey {
+	if !awsAccount.Status.AccessKeyCreated {
 		accessKey, err := r.IamWrapper.CreateAccessKeyPair(awsAccount.Spec.UserName)
 		if err != nil {
 			log.Error(err, "unable to create access key")
 			return ctrl.Result{}, err
 		}
+		log.V(1).Info("created access key", "accessKeyId", accessKey.AccessKeyId)
+		awsAccount.Status.AccessKeyCreated = true
 
 		// TODO: Save these to a secret in user's namespace
-		log.V(1).Info("Credentials", "access key ID:", accessKey.AccessKeyId, "Access key secret", accessKey.SecretAccessKey)
-
-		awsAccount.Status.Account = kuadrav1.Created
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
-			return ctrl.Result{}, err
-		}
-		log.V(1).Info("Created access key")
+		log.V(1).Info("Credentials", "accessKeyId:", accessKey.AccessKeyId, "accessKeySecret", accessKey.SecretAccessKey)
 	}
 
-	// Reconcile user groups
-	groupsToAddUserTo, _ := getDifference[string](awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
-
+	groupsToAddUserTo := getLeftDifference[string](awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
 	for _, group := range groupsToAddUserTo {
 		if _, err := r.IamWrapper.AddUserToGroup(group, awsAccount.Spec.UserName); err != nil {
-			log.Error(err, "unable to add user to group", "group name", group)
+			log.Error(err, "unable to add user to group", "groupName", group)
 			return ctrl.Result{}, err
 		}
 		log.V(1).Info("Added user to group", "group name:", group)
-
 		awsAccount.Status.UserGroups = append(awsAccount.Status.UserGroups, group)
-		if err := r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status after adding user to group", "group name", group)
+	}
+
+	groupsToRemoveUserFrom := getLeftDifference[string](awsAccount.Status.UserGroups, awsAccount.Spec.Groups)
+	for _, group := range groupsToRemoveUserFrom {
+		if _, err := r.IamWrapper.RemoveUserFromGroup(group, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to remove user from group", "groupName", group)
 			return ctrl.Result{}, err
+		}
+		log.V(1).Info("removed user from group", "groupName", group)
+		index := indexOf[string](awsAccount.Status.UserGroups, group)
+		awsAccount.Status.UserGroups = remove[string](awsAccount.Status.UserGroups, index)
+	}
+
+	if !reflect.DeepEqual(previous, *awsAccount) {
+		if err := r.Status().Update(ctx, awsAccount); err != nil {
+			log.Error(err, "unable to update awsAccount status")
+			return ctrl.Result{RequeueAfter: time.Second * 3}, err
 		}
 	}
 
-	// for _, group := range groupsToRemoveUserFrom {
-	// 	if _, err := r.IamWrapper.RemoveUserFromGroup(group, awsAccount.Spec.UserName); err != nil {
-	// 		log.Error(err, "unable to remove user from group", "group name", group)
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	log.V(1).Info("Removed user from group", "group name:", group)
-
-	// 	// TODO: delete element from and update awsAccount.Status.UserGroups
-	// 	if err := r.Status().Update(ctx, &awsAccount); err != nil {
-	// 		log.Error(err, "unable to update awsAccount status after removing user from group", "group name", group)
-	// 		return ctrl.Result{}, err
-	// 	}
-	// }
-
 	return ctrl.Result{}, nil
+}
+
+func (r *AwsAccountReconciler) getRefreshedStatus(awsAccount kuadrav1.AwsAccount) (*kuadrav1.AwsAccountStatus, error) {
+	var status kuadrav1.AwsAccountStatus
+	userExists, err := r.IamWrapper.IsExistingUser(awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	if !userExists {
+		// Return struct with zero values
+		return &status, nil
+	}
+	status.UserCreated = true
+
+	loginProfileExists, err := r.IamWrapper.HasLoginProfile(awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	status.LoginProfileCreated = loginProfileExists
+
+	accessKeyExists, err := r.IamWrapper.HasAccessKey(awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	status.AccessKeyCreated = accessKeyExists
+
+	groups, err := r.IamWrapper.ListGroupsForUser(awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		status.UserGroups = append(status.UserGroups, *group.GroupName)
+	}
+	return &status, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
