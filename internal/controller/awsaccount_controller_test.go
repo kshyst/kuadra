@@ -6,6 +6,7 @@ import (
 	"time"
 
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
+	slice "github.com/Kuadrant/kuadra/pkg/_internal"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -74,6 +75,7 @@ var _ = Describe("AwsAccount controller", func() {
 				Users:        []types.User{},
 				LoginProfile: map[string]types.LoginProfile{},
 				AccessKey:    map[string]types.AccessKey{},
+				Group:        map[string][]types.Group{},
 			}
 
 			client.Create(ctx, awsController)
@@ -90,13 +92,18 @@ var _ = Describe("AwsAccount controller", func() {
 			}
 
 			By("By checking if AwsAccount status is correct")
-			Eventually(func() kuadrav1.AccountStatus {
+			Eventually(func() kuadrav1.AwsAccountStatus {
 				err := client.Get(ctx, awsAccountLookupKey, createdAwsAccount)
 				if err != nil {
-					return ""
+					return createdAwsAccount.Status
 				}
-				return createdAwsAccount.Status.Account
-			}, timeout, interval).Should(Equal(kuadrav1.Created))
+				return createdAwsAccount.Status
+			}, timeout, interval).Should(Equal(kuadrav1.AwsAccountStatus{
+				UserCreated:         true,
+				LoginProfileCreated: true,
+				AccessKeyCreated:    true,
+				UserGroups:          awsController.Spec.Groups,
+			}))
 
 			By("By checking created user")
 			Expect(mockIam.Users).Should(Equal([]types.User{
@@ -104,8 +111,29 @@ var _ = Describe("AwsAccount controller", func() {
 					UserName: &awsController.Spec.UserName,
 				},
 			}))
-		})
 
+			By("By checking if user has login profile")
+			Expect(mockIam.LoginProfile[awsController.Spec.UserName]).Should(Equal(types.LoginProfile{
+				UserName:              &awsController.Spec.UserName,
+				PasswordResetRequired: true,
+			}))
+
+			By("By checking if user has access key")
+			Expect(mockIam.AccessKey[awsController.Spec.UserName]).Should(Equal(types.AccessKey{
+				AccessKeyId:     aws.String("AccessKeyId"),
+				SecretAccessKey: aws.String("SecretAccessKey"),
+			}))
+
+			By("By checking if user has correct groups")
+			Expect(mockIam.Group[awsController.Spec.UserName]).Should(Equal([]types.Group{
+				{
+					GroupName: &awsController.Spec.Groups[0],
+				},
+				{
+					GroupName: &awsController.Spec.Groups[1],
+				},
+			}))
+		})
 	})
 })
 
@@ -113,6 +141,7 @@ type mockIamWrapper struct {
 	Users        []types.User
 	LoginProfile map[string]types.LoginProfile
 	AccessKey    map[string]types.AccessKey
+	Group        map[string][]types.Group
 }
 
 func (c mockIamWrapper) GetUser(userName string) (*types.User, error) {
@@ -121,10 +150,39 @@ func (c mockIamWrapper) GetUser(userName string) (*types.User, error) {
 			return &user, nil
 		}
 	}
-	return nil, errors.New("User not found")
+	return &types.User{}, errors.New("User does not exist")
 }
 
-func (c *mockIamWrapper) CreateUser(userName string) (*types.User, error) {
+func (c mockIamWrapper) IsExistingUser(ctx context.Context, userName string) (bool, error) {
+	_, err := c.GetUser(userName)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (c mockIamWrapper) HasLoginProfile(ctx context.Context, userName string) (bool, error) {
+	if _, exists := c.LoginProfile[userName]; !exists {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (c mockIamWrapper) HasAccessKey(ctx context.Context, userName string) (bool, error) {
+	if _, exists := c.AccessKey[userName]; !exists {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (c mockIamWrapper) ListGroupsForUser(ctx context.Context, userName string) ([]types.Group, error) {
+	if _, exists := c.Group[userName]; !exists {
+		return nil, nil
+	}
+	return c.Group[userName], nil
+}
+
+func (c *mockIamWrapper) CreateUser(ctx context.Context, userName string) (*types.User, error) {
 	user := types.User{
 		UserName: &userName,
 	}
@@ -132,15 +190,21 @@ func (c *mockIamWrapper) CreateUser(userName string) (*types.User, error) {
 	return &user, nil
 }
 
-// Not yet used in AwsController
-func (c mockIamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
-	return c.Users, nil
+func (c *mockIamWrapper) CreateUserIfNotExists(ctx context.Context, userName string) error {
+	c.CreateUser(ctx, userName)
+	return nil
 }
 
-func (c mockIamWrapper) CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
-	if _, exists := c.LoginProfile[userName]; exists {
-		return types.LoginProfile{}, errors.New("username already exists")
+func (c mockIamWrapper) ListUsers(ctx context.Context, maxUsers int32) ([]types.User, error) {
+	var users []types.User
+
+	for i := int32(0); i < maxUsers && i < int32(len(c.Users)); i++ {
+		users = append(users, c.Users[i])
 	}
+	return users, nil
+}
+
+func (c mockIamWrapper) CreateLoginProfile(ctx context.Context, password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
 	loginProfile := types.LoginProfile{
 		UserName:              &userName,
 		PasswordResetRequired: passwordResetRequired,
@@ -149,11 +213,12 @@ func (c mockIamWrapper) CreateLoginProfile(password string, userName string, pas
 	return c.LoginProfile[userName], nil
 }
 
-func (c mockIamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey, error) {
-	if _, exists := c.AccessKey[userName]; exists {
-		return nil, errors.New("access key already exists for the user")
-	}
+func (c mockIamWrapper) CreateLoginProfileIfNotExists(ctx context.Context, password string, userName string, passwordResetRequired bool) error {
+	c.CreateLoginProfile(ctx, password, userName, passwordResetRequired)
+	return nil
+}
 
+func (c mockIamWrapper) CreateAccessKeyPair(ctx context.Context, userName string) (*types.AccessKey, error) {
 	accessKey := types.AccessKey{
 		AccessKeyId:     aws.String("AccessKeyId"),
 		SecretAccessKey: aws.String("SecretAccessKey"),
@@ -163,7 +228,15 @@ func (c mockIamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey, 
 	return &accessKey, nil
 }
 
-// Not yet used in AwsController
-func (c mockIamWrapper) AddUserToGroup(groupName string, userName string) (middleware.Metadata, error) {
+func (c mockIamWrapper) AddUserToGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error) {
+	userGroup := types.Group{
+		GroupName: &groupName,
+	}
+	c.Group[userName] = append(c.Group[userName], userGroup)
+	return middleware.Metadata{}, nil
+}
+
+func (c *mockIamWrapper) RemoveUserFromGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error) {
+	c.Group[userName] = slice.Remove(c.Group[userName], func(g types.Group) bool { return g == types.Group{GroupName: &groupName} })
 	return middleware.Metadata{}, nil
 }
