@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"reflect"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -27,6 +29,7 @@ import (
 	"github.com/sethvargo/go-password/password"
 
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
+	slice "github.com/Kuadrant/kuadra/pkg/_internal"
 )
 
 // AwsAccountReconciler reconciles a AwsAccount object
@@ -52,69 +55,121 @@ type AwsAccountReconciler struct {
 func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// Get AwsAccount object object
-	var awsAccount kuadrav1.AwsAccount
-	if err := r.Get(ctx, req.NamespacedName, &awsAccount); err != nil {
+	var previous kuadrav1.AwsAccount
+	if err := r.Get(ctx, req.NamespacedName, &previous); err != nil {
 		log.Error(err, "unable to fetch AwsAccount")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	awsAccount := previous.DeepCopy()
 
-	if awsAccount.Status.Account == kuadrav1.CreatingUser || awsAccount.Status.Account == "" {
-		user, err := r.IamWrapper.CreateUser(awsAccount.Spec.UserName)
-		if err != nil {
+	refreshedStatus, err := r.getRefreshedStatus(ctx, *awsAccount)
+	if err != nil {
+		log.Error(err, "unable to get refreshed status")
+		return ctrl.Result{}, err
+	}
+	awsAccount.Status = *refreshedStatus
+
+	if !awsAccount.Status.UserCreated {
+		if err := r.IamWrapper.CreateUserIfNotExists(ctx, awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "unable to create IAM user")
 			return ctrl.Result{}, err
 		}
-		awsAccount.Status.Account = kuadrav1.CreatingLoginProfile
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
-			return ctrl.Result{}, err
-		}
-		log.V(1).Info("Created user", "user:", user)
+		log.V(1).Info("created user", "userName", awsAccount.Spec.UserName)
+		awsAccount.Status.UserCreated = true
 	}
 
-	if awsAccount.Status.Account == kuadrav1.CreatingLoginProfile {
+	if !awsAccount.Status.LoginProfileCreated {
 		pass, err := password.Generate(20, 3, 3, false, true)
 		if err != nil {
 			log.Error(err, "unable to generate password")
 			return ctrl.Result{}, err
 		}
-		_, err = r.IamWrapper.CreateLoginProfile(pass, awsAccount.Spec.UserName, true)
-		if err != nil {
+		if err := r.IamWrapper.CreateLoginProfileIfNotExists(ctx, pass, awsAccount.Spec.UserName, true); err != nil {
 			log.Error(err, "unable to create login profile")
 			return ctrl.Result{}, err
 		}
+		log.V(1).Info("created login profile")
+		awsAccount.Status.LoginProfileCreated = true
 
 		// TODO: Save this to a secret in user's namespace
 		log.V(1).Info("Temporary password", "password", pass)
-
-		awsAccount.Status.Account = kuadrav1.CreatingAccessKey
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
-			return ctrl.Result{}, err
-		}
-		log.V(1).Info("Created login profile")
 	}
 
-	if awsAccount.Status.Account == kuadrav1.CreatingAccessKey {
-		accessKey, err := r.IamWrapper.CreateAccessKeyPair(awsAccount.Spec.UserName)
+	if !awsAccount.Status.AccessKeyCreated {
+		accessKey, err := r.IamWrapper.CreateAccessKeyPair(ctx, awsAccount.Spec.UserName)
 		if err != nil {
 			log.Error(err, "unable to create access key")
 			return ctrl.Result{}, err
 		}
+		log.V(1).Info("created access key", "accessKeyId", accessKey.AccessKeyId)
+		awsAccount.Status.AccessKeyCreated = true
 
 		// TODO: Save these to a secret in user's namespace
-		log.V(1).Info("Credentials", "access key ID:", accessKey.AccessKeyId, "Access key secret", accessKey.SecretAccessKey)
+		log.V(1).Info("Credentials", "accessKeyId:", accessKey.AccessKeyId, "accessKeySecret", accessKey.SecretAccessKey)
+	}
 
-		awsAccount.Status.Account = kuadrav1.Created
-		if err = r.Status().Update(ctx, &awsAccount); err != nil {
-			log.Error(err, "unable to update awsAccount status")
+	groupsToAddUserTo := slice.GetLeftDifference(awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
+	for _, group := range groupsToAddUserTo {
+		if _, err := r.IamWrapper.AddUserToGroup(ctx, group, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to add user to group", "groupName", group)
 			return ctrl.Result{}, err
 		}
-		log.V(1).Info("Created access key")
+		log.V(1).Info("Added user to group", "group name:", group)
+		awsAccount.Status.UserGroups = append(awsAccount.Status.UserGroups, group)
+	}
+
+	groupsToRemoveUserFrom := slice.GetLeftDifference(awsAccount.Status.UserGroups, awsAccount.Spec.Groups)
+	for _, group := range groupsToRemoveUserFrom {
+		if _, err := r.IamWrapper.RemoveUserFromGroup(ctx, group, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to remove user from group", "groupName", group)
+			return ctrl.Result{}, err
+		}
+		log.V(1).Info("removed user from group", "groupName", group)
+		awsAccount.Status.UserGroups = slice.Remove(awsAccount.Status.UserGroups, func(g string) bool { return g == group })
+	}
+
+	if !reflect.DeepEqual(previous, *awsAccount) {
+		if err := r.Status().Update(ctx, awsAccount); err != nil {
+			log.Error(err, "unable to update awsAccount status")
+			return ctrl.Result{RequeueAfter: time.Second * 3}, err
+		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccount kuadrav1.AwsAccount) (*kuadrav1.AwsAccountStatus, error) {
+	var status kuadrav1.AwsAccountStatus
+	userExists, err := r.IamWrapper.IsExistingUser(ctx, awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	if !userExists {
+		// Return struct with zero values
+		return &status, nil
+	}
+	status.UserCreated = true
+
+	loginProfileExists, err := r.IamWrapper.HasLoginProfile(ctx, awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	status.LoginProfileCreated = loginProfileExists
+
+	accessKeyExists, err := r.IamWrapper.HasAccessKey(ctx, awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	status.AccessKeyCreated = accessKeyExists
+
+	groups, err := r.IamWrapper.ListGroupsForUser(ctx, awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		status.UserGroups = append(status.UserGroups, *group.GroupName)
+	}
+	return &status, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

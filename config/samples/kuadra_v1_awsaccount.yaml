@@ -12,5 +12,6 @@ spec:
   userName: ef-dns
   groups:
     - dns-management
+    - test-group
   zones:
     - ef.kuardra.io

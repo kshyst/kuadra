@@ -33,32 +33,22 @@ type AwsAccountSpec struct {
 	Zones    []string `json:"zones"`
 }
 
-// +kubebuilder:validation:Enum=creating user;creating login profile;creating access key;created
-type AccountStatus string
-
-const (
-	CreatingUser AccountStatus = "creating user"
-
-	CreatingLoginProfile AccountStatus = "creating login profile"
-
-	CreatingAccessKey AccountStatus = "creating access key"
-
-	Created AccountStatus = "created"
-)
-
 // AwsAccountStatus defines the observed state of AwsAccount
 type AwsAccountStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +optional
-	Account AccountStatus `json:"account"`
+	UserCreated bool `json:"userCreated"`
+
+	// +optional
+	LoginProfileCreated bool `json:"loginProfileCreated"`
+
+	// +optional
+	AccessKeyCreated bool `json:"accessKeyCreated"`
 
 	// +optional
 	UserGroups []string `json:"userGroups"`
-
-	// +optional
-	ZonesCreated []string `json:"zonesCreated"`
 }
 
 //+kubebuilder:object:root=true
