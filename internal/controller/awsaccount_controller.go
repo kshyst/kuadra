@@ -29,38 +29,8 @@ import (
 	"github.com/sethvargo/go-password/password"
 
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
+	slice "github.com/Kuadrant/kuadra/pkg/_internal"
 )
-
-func contains[T comparable](slice []T, val T) bool {
-	for _, element := range slice {
-		if element == val {
-			return true
-		}
-	}
-	return false
-}
-
-func indexOf[T comparable](slice []T, element T) int {
-	for i, val := range slice {
-		if val == element {
-			return i
-		}
-	}
-	return -1
-}
-
-func remove[T any](slice []T, i int) []T {
-	return append(slice[:i], slice[i+1:]...)
-}
-
-func getLeftDifference[T comparable](left []T, right []T) (leftDifference []T) {
-	for _, val := range left {
-		if !contains[T](right, val) {
-			leftDifference = append(leftDifference, val)
-		}
-	}
-	return leftDifference
-}
 
 // AwsAccountReconciler reconciles a AwsAccount object
 type AwsAccountReconciler struct {
@@ -92,7 +62,7 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	awsAccount := previous.DeepCopy()
 
-	refreshedStatus, err := r.getRefreshedStatus(*awsAccount)
+	refreshedStatus, err := r.getRefreshedStatus(ctx, *awsAccount)
 	if err != nil {
 		log.Error(err, "unable to get refreshed status")
 		return ctrl.Result{}, err
@@ -100,7 +70,7 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	awsAccount.Status = *refreshedStatus
 
 	if !awsAccount.Status.UserCreated {
-		if err := r.IamWrapper.CreateUserIfNotExists(awsAccount.Spec.UserName); err != nil {
+		if err := r.IamWrapper.CreateUserIfNotExists(ctx, awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "unable to create IAM user")
 			return ctrl.Result{}, err
 		}
@@ -114,7 +84,7 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			log.Error(err, "unable to generate password")
 			return ctrl.Result{}, err
 		}
-		if err := r.IamWrapper.CreateLoginProfileIfNotExists(pass, awsAccount.Spec.UserName, true); err != nil {
+		if err := r.IamWrapper.CreateLoginProfileIfNotExists(ctx, pass, awsAccount.Spec.UserName, true); err != nil {
 			log.Error(err, "unable to create login profile")
 			return ctrl.Result{}, err
 		}
@@ -126,7 +96,7 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if !awsAccount.Status.AccessKeyCreated {
-		accessKey, err := r.IamWrapper.CreateAccessKeyPair(awsAccount.Spec.UserName)
+		accessKey, err := r.IamWrapper.CreateAccessKeyPair(ctx, awsAccount.Spec.UserName)
 		if err != nil {
 			log.Error(err, "unable to create access key")
 			return ctrl.Result{}, err
@@ -138,9 +108,9 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		log.V(1).Info("Credentials", "accessKeyId:", accessKey.AccessKeyId, "accessKeySecret", accessKey.SecretAccessKey)
 	}
 
-	groupsToAddUserTo := getLeftDifference[string](awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
+	groupsToAddUserTo := slice.GetLeftDifference(awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
 	for _, group := range groupsToAddUserTo {
-		if _, err := r.IamWrapper.AddUserToGroup(group, awsAccount.Spec.UserName); err != nil {
+		if _, err := r.IamWrapper.AddUserToGroup(ctx, group, awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "unable to add user to group", "groupName", group)
 			return ctrl.Result{}, err
 		}
@@ -148,15 +118,14 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		awsAccount.Status.UserGroups = append(awsAccount.Status.UserGroups, group)
 	}
 
-	groupsToRemoveUserFrom := getLeftDifference[string](awsAccount.Status.UserGroups, awsAccount.Spec.Groups)
+	groupsToRemoveUserFrom := slice.GetLeftDifference(awsAccount.Status.UserGroups, awsAccount.Spec.Groups)
 	for _, group := range groupsToRemoveUserFrom {
-		if _, err := r.IamWrapper.RemoveUserFromGroup(group, awsAccount.Spec.UserName); err != nil {
+		if _, err := r.IamWrapper.RemoveUserFromGroup(ctx, group, awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "unable to remove user from group", "groupName", group)
 			return ctrl.Result{}, err
 		}
 		log.V(1).Info("removed user from group", "groupName", group)
-		index := indexOf[string](awsAccount.Status.UserGroups, group)
-		awsAccount.Status.UserGroups = remove[string](awsAccount.Status.UserGroups, index)
+		awsAccount.Status.UserGroups = slice.Remove(awsAccount.Status.UserGroups, func(g string) bool { return g == group })
 	}
 
 	if !reflect.DeepEqual(previous, *awsAccount) {
@@ -169,9 +138,9 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
-func (r *AwsAccountReconciler) getRefreshedStatus(awsAccount kuadrav1.AwsAccount) (*kuadrav1.AwsAccountStatus, error) {
+func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccount kuadrav1.AwsAccount) (*kuadrav1.AwsAccountStatus, error) {
 	var status kuadrav1.AwsAccountStatus
-	userExists, err := r.IamWrapper.IsExistingUser(awsAccount.Spec.UserName)
+	userExists, err := r.IamWrapper.IsExistingUser(ctx, awsAccount.Spec.UserName)
 	if err != nil {
 		return nil, err
 	}
@@ -181,19 +150,19 @@ func (r *AwsAccountReconciler) getRefreshedStatus(awsAccount kuadrav1.AwsAccount
 	}
 	status.UserCreated = true
 
-	loginProfileExists, err := r.IamWrapper.HasLoginProfile(awsAccount.Spec.UserName)
+	loginProfileExists, err := r.IamWrapper.HasLoginProfile(ctx, awsAccount.Spec.UserName)
 	if err != nil {
 		return nil, err
 	}
 	status.LoginProfileCreated = loginProfileExists
 
-	accessKeyExists, err := r.IamWrapper.HasAccessKey(awsAccount.Spec.UserName)
+	accessKeyExists, err := r.IamWrapper.HasAccessKey(ctx, awsAccount.Spec.UserName)
 	if err != nil {
 		return nil, err
 	}
 	status.AccessKeyCreated = accessKeyExists
 
-	groups, err := r.IamWrapper.ListGroupsForUser(awsAccount.Spec.UserName)
+	groups, err := r.IamWrapper.ListGroupsForUser(ctx, awsAccount.Spec.UserName)
 	if err != nil {
 		return nil, err
 	}

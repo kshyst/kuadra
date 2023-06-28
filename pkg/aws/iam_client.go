@@ -14,6 +14,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 )
 
+func isNoSuchEntityException(err error) bool {
+	var apiError smithy.APIError
+	errors.As(err, &apiError)
+	switch apiError.(type) {
+	case *types.NoSuchEntityException:
+		return true
+	default:
+		return false
+	}
+}
+
 type iamWrapper struct {
 	IamClient *iam.Client
 }
@@ -31,66 +42,47 @@ func NewIamWrapper() (*iamWrapper, error) {
 	return &iamWrapper, nil
 }
 
-func (wrapper iamWrapper) GetUser(userName string) (*types.User, error) {
-	var user *types.User
-	result, err := wrapper.IamClient.GetUser(context.TODO(), &iam.GetUserInput{
+func (wrapper iamWrapper) GetUser(ctx context.Context, userName string) (*types.User, error) {
+	result, err := wrapper.IamClient.GetUser(ctx, &iam.GetUserInput{
 		UserName: aws.String(userName),
 	})
-	if err != nil {
-		var apiError smithy.APIError
-		if errors.As(err, &apiError) {
-			switch apiError.(type) {
-			case *types.NoSuchEntityException:
-				log.Printf("User %v does not exist.\n", userName)
-				err = nil
-			default:
-				log.Printf("Couldn't get user %v. Here's why: %v\n", userName, err)
-			}
-		}
-	} else {
-		user = result.User
+	if isNoSuchEntityException(err) {
+		return nil, nil
 	}
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	return result.User, err
 }
 
-func (wrapper iamWrapper) IsExistingUser(userName string) (bool, error) {
-	_, err := wrapper.IamClient.GetUser(context.TODO(), &iam.GetUserInput{
+func (wrapper iamWrapper) IsExistingUser(ctx context.Context, userName string) (bool, error) {
+	_, err := wrapper.IamClient.GetUser(ctx, &iam.GetUserInput{
 		UserName: aws.String(userName),
 	})
+	if isNoSuchEntityException(err) {
+		return false, nil
+	}
 	if err != nil {
-		var apiError smithy.APIError
-		if errors.As(err, &apiError) {
-			switch apiError.(type) {
-			case *types.NoSuchEntityException:
-				return false, nil
-			default:
-				return false, err
-			}
-		}
+		return false, err
 	}
 	return true, nil
 }
 
-func (wrapper iamWrapper) HasLoginProfile(userName string) (bool, error) {
-	_, err := wrapper.IamClient.GetLoginProfile(context.TODO(), &iam.GetLoginProfileInput{
+func (wrapper iamWrapper) HasLoginProfile(ctx context.Context, userName string) (bool, error) {
+	_, err := wrapper.IamClient.GetLoginProfile(ctx, &iam.GetLoginProfileInput{
 		UserName: aws.String(userName),
 	})
+	if isNoSuchEntityException(err) {
+		return false, nil
+	}
 	if err != nil {
-		var apiError smithy.APIError
-		if errors.As(err, &apiError) {
-			switch apiError.(type) {
-			case *types.NoSuchEntityException:
-				return false, nil
-			default:
-				return false, err
-			}
-		}
+		return false, err
 	}
 	return true, nil
 }
 
-func (wrapper iamWrapper) HasAccessKey(userName string) (bool, error) {
-	result, err := wrapper.IamClient.ListAccessKeys(context.TODO(), &iam.ListAccessKeysInput{
+func (wrapper iamWrapper) HasAccessKey(ctx context.Context, userName string) (bool, error) {
+	result, err := wrapper.IamClient.ListAccessKeys(ctx, &iam.ListAccessKeysInput{
 		UserName: aws.String(userName),
 	})
 	if err != nil {
@@ -99,8 +91,8 @@ func (wrapper iamWrapper) HasAccessKey(userName string) (bool, error) {
 	return len(result.AccessKeyMetadata) > 0, nil
 }
 
-func (wrapper iamWrapper) ListGroupsForUser(userName string) ([]types.Group, error) {
-	result, err := wrapper.IamClient.ListGroupsForUser(context.TODO(), &iam.ListGroupsForUserInput{
+func (wrapper iamWrapper) ListGroupsForUser(ctx context.Context, userName string) ([]types.Group, error) {
+	result, err := wrapper.IamClient.ListGroupsForUser(ctx, &iam.ListGroupsForUserInput{
 		UserName: aws.String(userName),
 	})
 	if err != nil {
@@ -109,9 +101,9 @@ func (wrapper iamWrapper) ListGroupsForUser(userName string) ([]types.Group, err
 	return result.Groups, nil
 }
 
-func (wrapper iamWrapper) CreateUser(userName string) (*types.User, error) {
+func (wrapper iamWrapper) CreateUser(ctx context.Context, userName string) (*types.User, error) {
 	var user *types.User
-	result, err := wrapper.IamClient.CreateUser(context.TODO(), &iam.CreateUserInput{
+	result, err := wrapper.IamClient.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String(userName),
 	})
 	if err != nil {
@@ -122,27 +114,19 @@ func (wrapper iamWrapper) CreateUser(userName string) (*types.User, error) {
 	return user, err
 }
 
-func (wrapper iamWrapper) CreateUserIfNotExists(userName string) error {
-	_, err := wrapper.IamClient.CreateUser(context.TODO(), &iam.CreateUserInput{
+func (wrapper iamWrapper) CreateUserIfNotExists(ctx context.Context, userName string) error {
+	_, err := wrapper.IamClient.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String(userName),
 	})
-	if err != nil {
-		var apiError smithy.APIError
-		if errors.As(err, &apiError) {
-			switch apiError.(type) {
-			case *types.EntityAlreadyExistsException:
-				return nil
-			default:
-				return err
-			}
-		}
+	if err != nil && !isNoSuchEntityException(err) {
+		return err
 	}
 	return nil
 }
 
-func (wrapper iamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
+func (wrapper iamWrapper) ListUsers(ctx context.Context, maxUsers int32) ([]types.User, error) {
 	var users []types.User
-	result, err := wrapper.IamClient.ListUsers(context.TODO(), &iam.ListUsersInput{
+	result, err := wrapper.IamClient.ListUsers(ctx, &iam.ListUsersInput{
 		MaxItems: aws.Int32(maxUsers),
 	})
 	if err != nil {
@@ -153,8 +137,8 @@ func (wrapper iamWrapper) ListUsers(maxUsers int32) ([]types.User, error) {
 	return users, err
 }
 
-func (wrapper iamWrapper) CreateLoginProfile(password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
-	result, err := wrapper.IamClient.CreateLoginProfile(context.TODO(), &iam.CreateLoginProfileInput{
+func (wrapper iamWrapper) CreateLoginProfile(ctx context.Context, password string, userName string, passwordResetRequired bool) (types.LoginProfile, error) {
+	result, err := wrapper.IamClient.CreateLoginProfile(ctx, &iam.CreateLoginProfileInput{
 		Password:              &password,
 		UserName:              &userName,
 		PasswordResetRequired: passwordResetRequired,
@@ -168,29 +152,21 @@ func (wrapper iamWrapper) CreateLoginProfile(password string, userName string, p
 	return loginProfile, err
 }
 
-func (wrapper iamWrapper) CreateLoginProfileIfNotExists(password string, userName string, passwordResetRequired bool) error {
-	_, err := wrapper.IamClient.CreateLoginProfile(context.TODO(), &iam.CreateLoginProfileInput{
+func (wrapper iamWrapper) CreateLoginProfileIfNotExists(ctx context.Context, password string, userName string, passwordResetRequired bool) error {
+	_, err := wrapper.IamClient.CreateLoginProfile(ctx, &iam.CreateLoginProfileInput{
 		Password:              &password,
 		UserName:              &userName,
 		PasswordResetRequired: passwordResetRequired,
 	})
-	if err != nil {
-		var apiError smithy.APIError
-		if errors.As(err, &apiError) {
-			switch apiError.(type) {
-			case *types.EntityAlreadyExistsException:
-				return nil
-			default:
-				return err
-			}
-		}
+	if err != nil && !isNoSuchEntityException(err) {
+		return err
 	}
 	return nil
 }
 
-func (wrapper iamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey, error) {
+func (wrapper iamWrapper) CreateAccessKeyPair(ctx context.Context, userName string) (*types.AccessKey, error) {
 	var key *types.AccessKey
-	result, err := wrapper.IamClient.CreateAccessKey(context.TODO(), &iam.CreateAccessKeyInput{
+	result, err := wrapper.IamClient.CreateAccessKey(ctx, &iam.CreateAccessKeyInput{
 		UserName: aws.String(userName)})
 	if err != nil {
 		log.Printf("Couldn't create access key pair for user %v. Here's why: %v\n", userName, err)
@@ -200,9 +176,9 @@ func (wrapper iamWrapper) CreateAccessKeyPair(userName string) (*types.AccessKey
 	return key, err
 }
 
-func (wrapper iamWrapper) AddUserToGroup(groupName string, userName string) (middleware.Metadata, error) {
+func (wrapper iamWrapper) AddUserToGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error) {
 	var metadata middleware.Metadata
-	result, err := wrapper.IamClient.AddUserToGroup(context.TODO(), &iam.AddUserToGroupInput{
+	result, err := wrapper.IamClient.AddUserToGroup(ctx, &iam.AddUserToGroupInput{
 		GroupName: aws.String(groupName),
 		UserName:  aws.String(userName)})
 	if err != nil {
@@ -213,9 +189,9 @@ func (wrapper iamWrapper) AddUserToGroup(groupName string, userName string) (mid
 	return metadata, err
 }
 
-func (wrapper iamWrapper) RemoveUserFromGroup(groupName string, userName string) (middleware.Metadata, error) {
+func (wrapper iamWrapper) RemoveUserFromGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error) {
 	var metadata middleware.Metadata
-	result, err := wrapper.IamClient.RemoveUserFromGroup(context.TODO(), &iam.RemoveUserFromGroupInput{
+	result, err := wrapper.IamClient.RemoveUserFromGroup(ctx, &iam.RemoveUserFromGroupInput{
 		GroupName: aws.String(groupName),
 		UserName:  aws.String(userName)})
 	if err != nil {
