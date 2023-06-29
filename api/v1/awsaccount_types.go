@@ -49,6 +49,9 @@ type AwsAccountStatus struct {
 
 	// +optional
 	UserGroups []string `json:"userGroups"`
+
+	// +optional
+	NamespaceCreated bool `json:"namespaceCreated"`
 }
 
 //+kubebuilder:object:root=true

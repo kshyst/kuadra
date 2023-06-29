@@ -21,7 +21,10 @@ import (
 	"reflect"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -42,6 +45,7 @@ type AwsAccountReconciler struct {
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts/finalizers,verbs=update
+//+kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -68,6 +72,14 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	awsAccount.Status = *refreshedStatus
+
+	if !awsAccount.Status.NamespaceCreated {
+		if err := r.createNamespaceIfNotExists(ctx, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to create namespace")
+			return ctrl.Result{}, err
+		}
+		awsAccount.Status.NamespaceCreated = true
+	}
 
 	if !awsAccount.Status.UserCreated {
 		if err := r.IamWrapper.CreateUserIfNotExists(ctx, awsAccount.Spec.UserName); err != nil {
@@ -138,8 +150,37 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
+func (r *AwsAccountReconciler) isNamespace(ctx context.Context, namespace string) (bool, error) {
+	ns := &v1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: namespace, Namespace: v1.NamespaceAll}, ns); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return true, nil
+}
+
+func (r *AwsAccountReconciler) createNamespaceIfNotExists(ctx context.Context, namespace string) error {
+	ns := &v1.Namespace{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Namespace",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+		},
+	}
+	err := r.Create(ctx, ns)
+	return client.IgnoreAlreadyExists(err)
+}
+
 func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccount kuadrav1.AwsAccount) (*kuadrav1.AwsAccountStatus, error) {
 	var status kuadrav1.AwsAccountStatus
+
+	namespaceExists, err := r.isNamespace(ctx, awsAccount.Spec.UserName)
+	if err != nil {
+		return nil, err
+	}
+	status.NamespaceCreated = namespaceExists
+
 	userExists, err := r.IamWrapper.IsExistingUser(ctx, awsAccount.Spec.UserName)
 	if err != nil {
 		return nil, err
@@ -169,6 +210,7 @@ func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccoun
 	for _, group := range groups {
 		status.UserGroups = append(status.UserGroups, *group.GroupName)
 	}
+
 	return &status, nil
 }
 
