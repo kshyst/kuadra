@@ -46,6 +46,7 @@ type AwsAccountReconciler struct {
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=kuadra.kuadrant.io,resources=awsaccounts/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -78,6 +79,7 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			log.Error(err, "unable to create namespace")
 			return ctrl.Result{}, err
 		}
+		log.V(1).Info("created namespace", "namespace", awsAccount.Spec.UserName)
 		awsAccount.Status.NamespaceCreated = true
 	}
 
@@ -96,15 +98,26 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			log.Error(err, "unable to generate password")
 			return ctrl.Result{}, err
 		}
-		if err := r.IamWrapper.CreateLoginProfileIfNotExists(ctx, pass, awsAccount.Spec.UserName, true); err != nil {
+		secretData := map[string]string{
+			"userName": awsAccount.Spec.UserName,
+			"password": pass,
+		}
+		if err := r.createSecretIfNotExists(ctx, secretData, "aws-login", awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to create secret for AWS password")
+			return ctrl.Result{}, err
+		}
+		// Use password value from retrieved secret so that possible creation errors do not cause incorrect password to be set
+		retrievedSecret := &v1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: "aws-login", Namespace: awsAccount.Spec.UserName}, retrievedSecret); err != nil {
+			log.Error(err, "unable to get secret for AWS password")
+			return ctrl.Result{}, err
+		}
+		if err := r.IamWrapper.CreateLoginProfileIfNotExists(ctx, string(retrievedSecret.Data["password"]), awsAccount.Spec.UserName, true); err != nil {
 			log.Error(err, "unable to create login profile")
 			return ctrl.Result{}, err
 		}
 		log.V(1).Info("created login profile")
 		awsAccount.Status.LoginProfileCreated = true
-
-		// TODO: Save this to a secret in user's namespace
-		log.V(1).Info("Temporary password", "password", pass)
 	}
 
 	if !awsAccount.Status.AccessKeyCreated {
@@ -113,11 +126,16 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			log.Error(err, "unable to create access key")
 			return ctrl.Result{}, err
 		}
+		secretData := map[string]string{
+			"AWS_ACCESS_KEY_ID":     *accessKey.AccessKeyId,
+			"AWS_SECRET_ACCESS_KEY": *accessKey.SecretAccessKey,
+		}
+		if err := r.createSecretIfNotExists(ctx, secretData, "aws-credentials", awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "unable to create secret for AWS credentials")
+			return ctrl.Result{}, err
+		}
 		log.V(1).Info("created access key", "accessKeyId", accessKey.AccessKeyId)
 		awsAccount.Status.AccessKeyCreated = true
-
-		// TODO: Save these to a secret in user's namespace
-		log.V(1).Info("Credentials", "accessKeyId:", accessKey.AccessKeyId, "accessKeySecret", accessKey.SecretAccessKey)
 	}
 
 	groupsToAddUserTo := slice.GetLeftDifference(awsAccount.Spec.Groups, awsAccount.Status.UserGroups)
@@ -169,6 +187,22 @@ func (r *AwsAccountReconciler) createNamespaceIfNotExists(ctx context.Context, n
 		},
 	}
 	err := r.Create(ctx, ns)
+	return client.IgnoreAlreadyExists(err)
+}
+
+func (r *AwsAccountReconciler) createSecretIfNotExists(ctx context.Context, data map[string]string, name string, namespace string) error {
+	secret := &v1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		StringData: data,
+	}
+	err := r.Create(ctx, secret)
 	return client.IgnoreAlreadyExists(err)
 }
 
