@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/created-by: kuadra
   name: user-sample
 spec:
-  awsAccounts:
+  awsAccount:
     spec:
       user:
         userName: ib-dns
