@@ -59,7 +59,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	awsAccount := r.createScheme(&user, req.Namespace)
+	awsAccount := r.createAwsAccountScheme(&user, req.Namespace)
 
 	if err := controllerutil.SetControllerReference(&user, awsAccount, r.Scheme); err != nil {
 		log.Error(err, "Failed to set owner reference for AwsAccount")
@@ -82,7 +82,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{}, nil
 }
 
-func (r *UserReconciler) createScheme(user *kuadrav1.User, namespace string) *kuadrav1.AwsAccount {
+func (r *UserReconciler) createAwsAccountScheme(user *kuadrav1.User, namespace string) *kuadrav1.AwsAccount {
 	return &kuadrav1.AwsAccount{
 		TypeMeta: v1.TypeMeta{},
 		ObjectMeta: v1.ObjectMeta{
