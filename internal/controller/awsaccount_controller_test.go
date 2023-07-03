@@ -103,6 +103,7 @@ var _ = Describe("AwsAccount controller", func() {
 				LoginProfileCreated: true,
 				AccessKeyCreated:    true,
 				UserGroups:          awsController.Spec.Groups,
+				NamespaceCreated:    true,
 			}))
 
 			By("By checking created user")
