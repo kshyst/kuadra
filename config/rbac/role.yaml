@@ -55,3 +55,29 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - kuadra.kuadrant.io
+  resources:
+  - users
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kuadra.kuadrant.io
+  resources:
+  - users/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - kuadra.kuadrant.io
+  resources:
+  - users/status
+  verbs:
+  - get
+  - patch
+  - update
