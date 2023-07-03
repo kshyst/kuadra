@@ -66,14 +66,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return reconcile.Result{}, err
 	}
 
-	if existingAwsAccount, err := r.getExistingAwsAccount(ctx, awsAccount); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			err := r.createAwsAccount(ctx, awsAccount)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-		} else {
-			log.Error(err, "Failed to check AwsAccount existence")
+	existingAwsAccount, err := r.getExistingAwsAccount(ctx, awsAccount)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if existingAwsAccount == nil {
+		err := r.createAwsAccount(ctx, awsAccount)
+		if err != nil {
 			return reconcile.Result{}, err
 		}
 	} else {
@@ -106,7 +105,7 @@ func (r *UserReconciler) getExistingAwsAccount(ctx context.Context, awsAccount *
 	existingAwsAccount := &kuadrav1.AwsAccount{}
 	err := r.Get(ctx, types.NamespacedName{Name: awsAccount.Spec.UserName, Namespace: awsAccount.Namespace}, existingAwsAccount)
 	if err != nil {
-		return nil, err
+		return nil, client.IgnoreNotFound(err)
 	}
 	return existingAwsAccount, nil
 }
