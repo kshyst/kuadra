@@ -66,14 +66,18 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return reconcile.Result{}, err
 	}
 
-	existingAwsAccount := r.getExistingAwsAccount(ctx, awsAccount)
-	if existingAwsAccount != nil {
-		err := r.updateAwsAccount(ctx, awsAccount, existingAwsAccount)
-		if err != nil {
+	if existingAwsAccount, err := r.getExistingAwsAccount(ctx, awsAccount); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			err := r.createAwsAccount(ctx, awsAccount)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+		} else {
+			log.Error(err, "Failed to check AwsAccount existence")
 			return reconcile.Result{}, err
 		}
 	} else {
-		err := r.createAwsAccount(ctx, awsAccount)
+		err := r.updateAwsAccount(ctx, awsAccount, existingAwsAccount)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -98,14 +102,13 @@ func (r *UserReconciler) createAwsAccountScheme(user *kuadrav1.User, namespace s
 }
 
 // getExistingAwsAccount retrieves the existing AwsAccount object, if it exists.
-func (r *UserReconciler) getExistingAwsAccount(ctx context.Context, awsAccount *kuadrav1.AwsAccount) *kuadrav1.AwsAccount {
+func (r *UserReconciler) getExistingAwsAccount(ctx context.Context, awsAccount *kuadrav1.AwsAccount) (*kuadrav1.AwsAccount, error) {
 	existingAwsAccount := &kuadrav1.AwsAccount{}
 	err := r.Get(ctx, types.NamespacedName{Name: awsAccount.Spec.UserName, Namespace: awsAccount.Namespace}, existingAwsAccount)
 	if err != nil {
-		log.Log.Info("Failed to check AwsAccount existence")
-		return nil
+		return nil, err
 	}
-	return existingAwsAccount
+	return existingAwsAccount, nil
 }
 
 // updateAwsAccount updates the existing AwsAccount object.
