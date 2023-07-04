@@ -71,6 +71,10 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if awsAccount.DeletionTimestamp != nil && !awsAccount.DeletionTimestamp.IsZero() {
+		if err := r.deleteNamespace(ctx, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "Failed to delete namespace", "namespace", awsAccount.Spec.UserName)
+			return ctrl.Result{}, err
+		}
 		if err := r.deleteIamUser(ctx, awsAccount.Spec.UserName); err != nil {
 			log.Error(err, "Failed to delete IAM user", "userName", awsAccount.Spec.UserName)
 			return ctrl.Result{}, err
@@ -273,6 +277,14 @@ func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccoun
 	}
 
 	return &status, nil
+}
+
+func (r *AwsAccountReconciler) deleteNamespace(ctx context.Context, namespace string) error {
+	ns := &v1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: namespace, Namespace: v1.NamespaceAll}, ns); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	return r.Delete(ctx, ns)
 }
 
 func (r *AwsAccountReconciler) deleteIamUser(ctx context.Context, userName string) error {
