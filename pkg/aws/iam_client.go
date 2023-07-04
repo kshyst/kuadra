@@ -201,3 +201,41 @@ func (wrapper iamWrapper) RemoveUserFromGroup(ctx context.Context, groupName str
 	}
 	return metadata, err
 }
+
+func (wrapper iamWrapper) DeleteUser(ctx context.Context, userName string) error {
+	_, err := wrapper.IamClient.DeleteUser(ctx, &iam.DeleteUserInput{
+		UserName: aws.String(userName),
+	})
+	return err
+}
+
+func (wrapper iamWrapper) DeleteLoginProfileIfExists(ctx context.Context, userName string) error {
+	_, err := wrapper.IamClient.DeleteLoginProfile(ctx, &iam.DeleteLoginProfileInput{
+		UserName: aws.String(userName),
+	})
+	if isNoSuchEntityException(err) {
+		return nil
+	}
+	return err
+}
+
+func (wrapper iamWrapper) ListAccessKeys(ctx context.Context, userName string) ([]types.AccessKeyMetadata, error) {
+	result, err := wrapper.IamClient.ListAccessKeys(ctx, &iam.ListAccessKeysInput{
+		UserName: aws.String(userName),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.AccessKeyMetadata, nil
+}
+
+func (wrapper iamWrapper) DeleteAccessKeyIfExists(ctx context.Context, userName string, keyId string) error {
+	_, err := wrapper.IamClient.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{
+		AccessKeyId: aws.String(keyId),
+		UserName:    aws.String(userName),
+	})
+	if isNoSuchEntityException(err) {
+		return nil
+	}
+	return err
+}

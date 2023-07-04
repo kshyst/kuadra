@@ -17,4 +17,8 @@ type IamWrapper interface {
 	CreateAccessKeyPair(ctx context.Context, userName string) (*types.AccessKey, error)
 	AddUserToGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error)
 	RemoveUserFromGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error)
+	DeleteUser(ctx context.Context, userName string) error
+	DeleteLoginProfileIfExists(ctx context.Context, userName string) error
+	ListAccessKeys(ctx context.Context, userName string) ([]types.AccessKeyMetadata, error)
+	DeleteAccessKeyIfExists(ctx context.Context, userName string, keyId string) error
 }

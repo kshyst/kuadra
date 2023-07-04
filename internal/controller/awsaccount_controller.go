@@ -27,12 +27,17 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/sethvargo/go-password/password"
 
 	kuadrav1 "github.com/Kuadrant/kuadra/api/v1"
 	slice "github.com/Kuadrant/kuadra/pkg/_internal"
+)
+
+const (
+	AwsAccountFinalizer = "kuadra.kuadrant.io/aws-account"
 )
 
 // AwsAccountReconciler reconciles a AwsAccount object
@@ -60,14 +65,32 @@ type AwsAccountReconciler struct {
 func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	var previous kuadrav1.AwsAccount
-	if err := r.Get(ctx, req.NamespacedName, &previous); err != nil {
-		log.Error(err, "unable to fetch AwsAccount")
+	var awsAccount kuadrav1.AwsAccount
+	if err := r.Get(ctx, req.NamespacedName, &awsAccount); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	awsAccount := previous.DeepCopy()
 
-	refreshedStatus, err := r.getRefreshedStatus(ctx, *awsAccount)
+	if awsAccount.DeletionTimestamp != nil && !awsAccount.DeletionTimestamp.IsZero() {
+		if err := r.deleteIamUser(ctx, awsAccount.Spec.UserName); err != nil {
+			log.Error(err, "Failed to delete IAM user", "userName", awsAccount.Spec.UserName)
+			return ctrl.Result{}, err
+		}
+		controllerutil.RemoveFinalizer(&awsAccount, AwsAccountFinalizer)
+
+		if err := r.Update(ctx, &awsAccount); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(&awsAccount, AwsAccountFinalizer) {
+		controllerutil.AddFinalizer(&awsAccount, AwsAccountFinalizer)
+		if err := r.Update(ctx, &awsAccount); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	refreshedStatus, err := r.getRefreshedStatus(ctx, awsAccount)
 	if err != nil {
 		log.Error(err, "unable to get refreshed status")
 		return ctrl.Result{}, err
@@ -158,8 +181,12 @@ func (r *AwsAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		awsAccount.Status.UserGroups = slice.Remove(awsAccount.Status.UserGroups, func(g string) bool { return g == group })
 	}
 
-	if !reflect.DeepEqual(previous, *awsAccount) {
-		if err := r.Status().Update(ctx, awsAccount); err != nil {
+	var latest kuadrav1.AwsAccount
+	if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !reflect.DeepEqual(latest.Status, awsAccount.Status) {
+		if err := r.Status().Update(ctx, &awsAccount); err != nil {
 			log.Error(err, "unable to update awsAccount status")
 			return ctrl.Result{RequeueAfter: time.Second * 3}, err
 		}
@@ -246,6 +273,34 @@ func (r *AwsAccountReconciler) getRefreshedStatus(ctx context.Context, awsAccoun
 	}
 
 	return &status, nil
+}
+
+func (r *AwsAccountReconciler) deleteIamUser(ctx context.Context, userName string) error {
+	groups, err := r.IamWrapper.ListGroupsForUser(ctx, userName)
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		if _, err := r.IamWrapper.RemoveUserFromGroup(ctx, *group.GroupName, userName); err != nil {
+			return err
+		}
+	}
+
+	if err := r.IamWrapper.DeleteLoginProfileIfExists(ctx, userName); err != nil {
+		return err
+	}
+
+	accessKeys, err := r.IamWrapper.ListAccessKeys(ctx, userName)
+	if err != nil {
+		return err
+	}
+	for _, accessKey := range accessKeys {
+		if err := r.IamWrapper.DeleteAccessKeyIfExists(ctx, userName, *accessKey.AccessKeyId); err != nil {
+			return err
+		}
+	}
+
+	return r.IamWrapper.DeleteUser(ctx, userName)
 }
 
 // SetupWithManager sets up the controller with the Manager.

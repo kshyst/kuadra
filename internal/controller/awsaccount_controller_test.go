@@ -74,8 +74,8 @@ var _ = Describe("AwsAccount controller", func() {
 			mockIam := mockIamWrapper{
 				Users:        []types.User{},
 				LoginProfile: map[string]types.LoginProfile{},
-				AccessKey:    map[string]types.AccessKey{},
-				Group:        map[string][]types.Group{},
+				AccessKeys:   map[string][]types.AccessKey{},
+				Groups:       map[string][]types.Group{},
 			}
 
 			client.Create(ctx, awsController)
@@ -120,13 +120,15 @@ var _ = Describe("AwsAccount controller", func() {
 			}))
 
 			By("By checking if user has access key")
-			Expect(mockIam.AccessKey[awsController.Spec.UserName]).Should(Equal(types.AccessKey{
-				AccessKeyId:     aws.String("AccessKeyId"),
-				SecretAccessKey: aws.String("SecretAccessKey"),
+			Expect(mockIam.AccessKeys[awsController.Spec.UserName]).Should(Equal([]types.AccessKey{
+				{
+					AccessKeyId:     aws.String("AccessKeyId"),
+					SecretAccessKey: aws.String("SecretAccessKey"),
+				},
 			}))
 
 			By("By checking if user has correct groups")
-			Expect(mockIam.Group[awsController.Spec.UserName]).Should(Equal([]types.Group{
+			Expect(mockIam.Groups[awsController.Spec.UserName]).Should(Equal([]types.Group{
 				{
 					GroupName: &awsController.Spec.Groups[0],
 				},
@@ -141,8 +143,8 @@ var _ = Describe("AwsAccount controller", func() {
 type mockIamWrapper struct {
 	Users        []types.User
 	LoginProfile map[string]types.LoginProfile
-	AccessKey    map[string]types.AccessKey
-	Group        map[string][]types.Group
+	AccessKeys   map[string][]types.AccessKey
+	Groups       map[string][]types.Group
 }
 
 func (c mockIamWrapper) GetUser(userName string) (*types.User, error) {
@@ -170,17 +172,17 @@ func (c mockIamWrapper) HasLoginProfile(ctx context.Context, userName string) (b
 }
 
 func (c mockIamWrapper) HasAccessKey(ctx context.Context, userName string) (bool, error) {
-	if _, exists := c.AccessKey[userName]; !exists {
+	if _, exists := c.AccessKeys[userName]; !exists {
 		return false, nil
 	}
 	return true, nil
 }
 
 func (c mockIamWrapper) ListGroupsForUser(ctx context.Context, userName string) ([]types.Group, error) {
-	if _, exists := c.Group[userName]; !exists {
+	if _, exists := c.Groups[userName]; !exists {
 		return nil, nil
 	}
-	return c.Group[userName], nil
+	return c.Groups[userName], nil
 }
 
 func (c *mockIamWrapper) CreateUser(ctx context.Context, userName string) (*types.User, error) {
@@ -224,7 +226,7 @@ func (c mockIamWrapper) CreateAccessKeyPair(ctx context.Context, userName string
 		AccessKeyId:     aws.String("AccessKeyId"),
 		SecretAccessKey: aws.String("SecretAccessKey"),
 	}
-	c.AccessKey[userName] = accessKey
+	c.AccessKeys[userName] = append(c.AccessKeys[userName], accessKey)
 
 	return &accessKey, nil
 }
@@ -233,11 +235,37 @@ func (c mockIamWrapper) AddUserToGroup(ctx context.Context, groupName string, us
 	userGroup := types.Group{
 		GroupName: &groupName,
 	}
-	c.Group[userName] = append(c.Group[userName], userGroup)
+	c.Groups[userName] = append(c.Groups[userName], userGroup)
 	return middleware.Metadata{}, nil
 }
 
 func (c *mockIamWrapper) RemoveUserFromGroup(ctx context.Context, groupName string, userName string) (middleware.Metadata, error) {
-	c.Group[userName] = slice.Remove(c.Group[userName], func(g types.Group) bool { return g == types.Group{GroupName: &groupName} })
+	c.Groups[userName] = slice.Remove(c.Groups[userName], func(g types.Group) bool { return g == types.Group{GroupName: &groupName} })
 	return middleware.Metadata{}, nil
+}
+
+func (c *mockIamWrapper) DeleteUser(ctx context.Context, userName string) error {
+	c.Users = slice.Remove(c.Users, func(u types.User) bool { return u.UserName == &userName })
+	return nil
+}
+
+func (c *mockIamWrapper) DeleteLoginProfileIfExists(ctx context.Context, userName string) error {
+	delete(c.LoginProfile, userName)
+	return nil
+}
+
+func (c *mockIamWrapper) ListAccessKeys(ctx context.Context, userName string) ([]types.AccessKeyMetadata, error) {
+	var accessKeys []types.AccessKeyMetadata
+	for _, accessKey := range c.AccessKeys[userName] {
+		ak := types.AccessKeyMetadata{
+			AccessKeyId: accessKey.AccessKeyId,
+		}
+		accessKeys = append(accessKeys, ak)
+	}
+	return accessKeys, nil
+}
+
+func (c *mockIamWrapper) DeleteAccessKeyIfExists(ctx context.Context, userName string, keyId string) error {
+	c.AccessKeys[userName] = slice.Remove(c.AccessKeys[userName], func(a types.AccessKey) bool { return a.AccessKeyId == &keyId })
+	return nil
 }

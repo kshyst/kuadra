@@ -1,6 +1,6 @@
 package slice
 
-func IndexOf[T comparable](slice []T, predicate func(T) bool) int {
+func IndexOf[T any](slice []T, predicate func(T) bool) int {
 	for i, val := range slice {
 		if predicate(val) {
 			return i
@@ -9,7 +9,7 @@ func IndexOf[T comparable](slice []T, predicate func(T) bool) int {
 	return -1
 }
 
-func Remove[T comparable](slice []T, predicate func(T) bool) []T {
+func Remove[T any](slice []T, predicate func(T) bool) []T {
 	i := IndexOf(slice, predicate)
 	if i == -1 {
 		return slice
