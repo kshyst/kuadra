@@ -48,9 +48,6 @@ var _ = Describe("AwsAccount controller", func() {
 				"dns-management",
 				"test-group",
 			},
-			Zones: []string{
-				"ib.kuadra.io",
-			},
 		},
 	}
 

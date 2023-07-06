@@ -41,14 +41,9 @@ spec:
                 type: array
               userName:
                 type: string
-              zones:
-                items:
-                  type: string
-                type: array
             required:
             - groups
             - userName
-            - zones
             type: object
           status:
             description: AwsAccountStatus defines the observed state of AwsAccount

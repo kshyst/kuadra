@@ -15,5 +15,3 @@ spec:
         userName: ib-dns
         groups:
           - dns-management
-        zones:
-          - ib.kuardra.io
