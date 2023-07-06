@@ -30,7 +30,6 @@ type AwsAccountSpec struct {
 
 	UserName string   `json:"userName"`
 	Groups   []string `json:"groups"`
-	Zones    []string `json:"zones"`
 }
 
 // AwsAccountStatus defines the observed state of AwsAccount

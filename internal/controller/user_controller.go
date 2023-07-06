@@ -95,7 +95,6 @@ func (r *UserReconciler) createAwsAccountScheme(user *kuadrav1.User, namespace s
 		Spec: kuadrav1.AwsAccountSpec{
 			UserName: user.Spec.AwsAccount.Spec.User.UserName,
 			Groups:   user.Spec.AwsAccount.Spec.User.Groups,
-			Zones:    user.Spec.AwsAccount.Spec.User.Zones,
 		},
 	}
 }

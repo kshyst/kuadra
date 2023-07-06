@@ -50,14 +50,9 @@ spec:
                             type: array
                           userName:
                             type: string
-                          zones:
-                            items:
-                              type: string
-                            type: array
                         required:
                         - groups
                         - userName
-                        - zones
                         type: object
                     type: object
                 type: object
