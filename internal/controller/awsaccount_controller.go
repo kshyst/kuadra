@@ -288,6 +288,14 @@ func (r *AwsAccountReconciler) deleteNamespace(ctx context.Context, namespace st
 }
 
 func (r *AwsAccountReconciler) deleteIamUser(ctx context.Context, userName string) error {
+	userExists, err := r.IamWrapper.IsExistingUser(ctx, userName)
+	if err != nil {
+		return err
+	}
+	if !userExists {
+		return nil
+	}
+
 	groups, err := r.IamWrapper.ListGroupsForUser(ctx, userName)
 	if err != nil {
 		return err
