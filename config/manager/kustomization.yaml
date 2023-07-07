@@ -6,7 +6,3 @@ images:
 - name: controller
   newName: docker.io/library/kuadra
   newTag: v1
-secretGenerator:
-- envs:
-  - ../../aws-credentials.env
-  name: aws-credentials
