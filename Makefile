@@ -121,7 +121,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 
 .PHONY: deploy-local
 deploy-local: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	cd config/local && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) --load-restrictor LoadRestrictionsNone build config/local | kubectl apply -f -
 
 .PHONY: undeploy-local
