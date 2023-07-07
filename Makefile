@@ -122,11 +122,11 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 .PHONY: deploy-local
 deploy-local: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) --load-restrictor LoadRestrictionsNone build config/default | kubectl apply -f -
+	$(KUSTOMIZE) --load-restrictor LoadRestrictionsNone build config/local | kubectl apply -f -
 
 .PHONY: undeploy-local
 undeploy-local: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) --load-restrictor LoadRestrictionsNone build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+	$(KUSTOMIZE) --load-restrictor LoadRestrictionsNone build config/local | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Build Dependencies
 

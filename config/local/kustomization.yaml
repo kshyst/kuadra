@@ -1,0 +1,7 @@
+resources:
+- default
+
+secretGenerator:
+- envs:
+  - ../../aws-credentials.env
+  name: aws-credentials
