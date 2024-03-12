@@ -25,3 +25,6 @@ bin/*
 
 # Go workspace file
 go.work
+
+# Ignore .idea/ directory (for GoLand developers)
+.idea/
